@@ -1,3 +1,4 @@
+import json
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -25,6 +26,7 @@ def record_data(redis: Session, sensor_id: int, data: schemas.SensorData) -> sch
 
     # Get and group dynamic data
     dynamic_data = {
+        "velocity": data.velocity,
         "temperature": data.temperature,
         "humidity": data.humidity,
         "battery_level": data.battery_level,
@@ -38,11 +40,10 @@ def record_data(redis: Session, sensor_id: int, data: schemas.SensorData) -> sch
 
     return db_sensordata
 
-def get_data(redis: Session, sensor_id: int, data: schemas.SensorData) -> schemas.Sensor:
+def get_data(redis: Session, sensor_id: int, db: Session) -> schemas.Sensor:
     
     # Get sensor by id
-    db_sensor = db.query(models.Sensor).filter(models.Sensor.id == sensor_id).first()
-
+    db_sensor = get_sensor(db, sensor_id)
     # Create key
     key = f"sensor:{sensor_id}:data"
     # Get dynamic data assigned to key
@@ -52,6 +53,7 @@ def get_data(redis: Session, sensor_id: int, data: schemas.SensorData) -> schema
     db_sensordata = {
         "id": sensor_id,
         "name": db_sensor.name,
+        "velocity": dynamic_data['velocity'],
         "temperature": dynamic_data['temperature'],
         "humidity": dynamic_data['humidity'],
         "battery_level": dynamic_data['battery_level'],
@@ -61,7 +63,9 @@ def get_data(redis: Session, sensor_id: int, data: schemas.SensorData) -> schema
     return db_sensordata
 
 def delete_sensor(db: Session, sensor_id: int):
-    db_sensor = db.query(models.Sensor).filter(models.Sensor.id == sensor_id).first()
+    
+    db_sensor = get_sensor(db, sensor_id)
+
     if db_sensor is None:
         raise HTTPException(status_code=404, detail="Sensor not found")
     db.delete(db_sensor)
