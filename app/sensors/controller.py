@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 import json
 
@@ -41,9 +41,13 @@ router = APIRouter(
 
 
 # 🙋🏽‍♀️ Add here the route to get a list of sensors near to a given location
-@router.get("sensors/near/{latitude}/{longitude}")
-def get_sensors_near(latitude: float, longitude: float, db: Session = Depends(get_db),mongodb_client: MongoDBClient = Depends(get_mongodb_client)):
-    return repository.get_sensors_near(mongodb=mongodb_client, latitude=latitude, longitude=longitude)
+@router.get("/near")
+def get_sensors_near( 
+    latitude: float = Query(..., alias="latitude", description="Latitude of the location"),
+    longitude: float = Query(..., alias="longitude", description="Longitude of the location"),
+    radius: float = Query(..., alias="radius", description="Radius in kilometers"),
+    db: Session = Depends(get_db),mongodb_client: MongoDBClient = Depends(get_mongodb_client)):
+    return repository.get_sensors_near(db=db, mongodb=mongodb_client, latitude=latitude, longitude=longitude, radius=radius)
 
 
 # 🙋🏽‍♀️ Add here the route to get all sensors
@@ -58,7 +62,7 @@ def create_sensor(sensor: schemas.SensorCreate, db: Session = Depends(get_db), m
     db_sensor = repository.get_sensor_by_name(db, sensor.name)
     if db_sensor:
         raise HTTPException(status_code=400, detail="Sensor with same name already registered")
-    return repository.create_sensor(db=db, sensor=sensor)
+    return repository.create_sensor(db=db, sensor=sensor, mongodb=mongodb_client)
 
 # 🙋🏽‍♀️ Add here the route to get a sensor by id
 @router.get("/{sensor_id}")

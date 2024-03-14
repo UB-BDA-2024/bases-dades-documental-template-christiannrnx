@@ -12,9 +12,9 @@ class Sensor(BaseModel):
     type: str
     mac_address: str
     battery_level: float
-    temperature: float
-    humidity: float
-    velocity: float
+    temperature: Optional[float]
+    humidity: Optional[float]
+    velocity: Optional[float]
     
     
     class Config:
