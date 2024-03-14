@@ -46,8 +46,10 @@ def get_sensors_near(
     latitude: float = Query(..., alias="latitude", description="Latitude of the location"),
     longitude: float = Query(..., alias="longitude", description="Longitude of the location"),
     radius: float = Query(..., alias="radius", description="Radius in kilometers"),
-    db: Session = Depends(get_db),mongodb_client: MongoDBClient = Depends(get_mongodb_client)):
-    return repository.get_sensors_near(db=db, mongodb=mongodb_client, latitude=latitude, longitude=longitude, radius=radius)
+    db: Session = Depends(get_db),
+    mongodb_client: MongoDBClient = Depends(get_mongodb_client),
+    redis_client : RedisClient = Depends(get_redis_client)):
+    return repository.get_sensors_near(db=db, mongodb=mongodb_client, redis=redis_client, latitude=latitude, longitude=longitude, radius=radius)
 
 
 # 🙋🏽‍♀️ Add here the route to get all sensors

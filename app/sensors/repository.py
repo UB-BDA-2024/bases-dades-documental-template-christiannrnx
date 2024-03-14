@@ -18,13 +18,17 @@ def get_sensors(db: Session, skip: int = 0, limit: int = 100) -> List[models.Sen
     return db.query(models.Sensor).offset(skip).limit(limit).all()
 
 def create_sensor(db: Session, sensor: schemas.SensorCreate, mongodb: MongoDBClient) -> models.Sensor:
+
+    # Add sensor to database
     db_sensor = models.Sensor(name=sensor.name)
     db.add(db_sensor)
     db.commit()
     db.refresh(db_sensor)
 
+    #Access mongodb
     collection = mongodb.client["mydatabase"]["sensors"]
     
+    # Information of the sensor to the database
     mongodb_sensor = {
         "id": db_sensor.id,
         "name": sensor.name,
@@ -38,6 +42,7 @@ def create_sensor(db: Session, sensor: schemas.SensorCreate, mongodb: MongoDBCli
         "firmware_version": sensor.firmware_version
     }
     
+    # Insert the sensor information into mongodb
     x = collection.insert_one(mongodb_sensor)
     
     print(x.inserted_id)
@@ -85,6 +90,26 @@ def get_data(redis: RedisClient, sensor_id: int, db: Session) -> schemas.Sensor:
 
     return db_sensordata
 
+def get_dynamic_data(redis: RedisClient, sensor_id: int, db: Session) -> schemas.Sensor:
+    
+    # Get sensor by id
+    db_sensor = get_sensor(db, sensor_id)
+    # Create key
+    key = f"sensor:{sensor_id}:data"
+    # Get dynamic data assigned to key
+    dynamic_data = json.loads(redis.get(key))
+
+    # dynamic data
+    db_sensordata = {
+        "velocity": dynamic_data['velocity'],
+        "temperature": dynamic_data['temperature'],
+        "humidity": dynamic_data['humidity'],
+        "battery_level": dynamic_data['battery_level'],
+        "last_seen": dynamic_data['last_seen']
+    }
+
+    return db_sensordata
+
 def delete_sensor(db: Session, sensor_id: int):
     
     db_sensor = get_sensor(db, sensor_id)
@@ -97,40 +122,32 @@ def delete_sensor(db: Session, sensor_id: int):
 
 def get_sensors_near(db: Session, mongodb: MongoDBClient, redis: RedisClient, latitude: float, longitude: float, radius: float):
 
-    # Convertimos la distancia del radio a una medida en grados de latitud y longitud
-    # (Esta conversión es aproximada y puede no ser precisa en todos los casos)
+    # Aproximate radius distance conversion
     degrees_per_km = 1 / 111.12
     lat_deg = radius * degrees_per_km
     lon_deg = radius * degrees_per_km / math.cos(latitude * math.pi / 180)
 
-    # Calculamos los límites de latitud y longitud para la búsqueda de sensores cercanos
+    # Calculate limits
     lat_min = latitude - lat_deg
     lat_max = latitude + lat_deg
     lon_min = longitude - lon_deg
     lon_max = longitude + lon_deg
 
-     # Conexión a la base de datos MongoDB
+     # Access database
     collection = mongodb.client["mydatabase"]["sensors"]
 
 
-    # Consulta para encontrar sensores dentro de los límites especificados
+    # Query to find sensors
     query = {
         "latitude": {"$gte": lat_min, "$lte": lat_max},
         "longitude": {"$gte": lon_min, "$lte": lon_max}
     }
 
-    # Realizar la consulta a MongoDB
     sensors = collection.find(query)
 
-    # Convertir el resultado en una lista de diccionarios para facilitar el formato de retorno
+    # Conversion to dictionary
     sensors_nearby = []
     for sensor in sensors:
-        print(sensor)
-        print(sensor['id'])
-        sensors_nearby.append(get_data(redis,sensor['id'],db))
-    
-    print(sensors_nearby)
-    print(len(sensors_nearby))
-        
+        sensors_nearby.append(get_dynamic_data(redis,sensor['id'],db))
 
     return sensors_nearby
