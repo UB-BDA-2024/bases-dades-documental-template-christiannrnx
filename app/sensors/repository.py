@@ -1,12 +1,11 @@
-import json
-import math
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from app.redis_client import RedisClient
-from app.mongodb_client import MongoDBClient
 from typing import List, Optional
-
+from app.mongodb_client import MongoDBClient
+from app.redis_client import RedisClient
 from . import models, schemas
+import json
+from typing import Dict
 
 def get_sensor(db: Session, sensor_id: int) -> Optional[models.Sensor]:
     return db.query(models.Sensor).filter(models.Sensor.id == sensor_id).first()
@@ -19,135 +18,105 @@ def get_sensors(db: Session, skip: int = 0, limit: int = 100) -> List[models.Sen
 
 def create_sensor(db: Session, sensor: schemas.SensorCreate, mongodb: MongoDBClient) -> models.Sensor:
 
-    # Add sensor to database
     db_sensor = models.Sensor(name=sensor.name)
     db.add(db_sensor)
     db.commit()
     db.refresh(db_sensor)
+    
+    # Select database
+    mongodb.getDatabase("mydatabase")
+    # Select collection
+    mongodb.getCollection("sensors")
 
-    #Access mongodb
-    collection = mongodb.client["mydatabase"]["sensors"]
-    
-    # Information of the sensor to the database
-    mongodb_sensor = {
-        "id": db_sensor.id,
-        "name": sensor.name,
-        "latitude": sensor.latitude,
-        "longitude": sensor.longitude,
-        "type": sensor.type,
-        "mac_address": sensor.mac_address,
-        "manufacturer": sensor.manufacturer,
-        "model": sensor.model,
-        "serie_number": sensor.serie_number,
-        "firmware_version": sensor.firmware_version
-    }
-    
-    # Insert the sensor information into mongodb
-    x = collection.insert_one(mongodb_sensor)
-    
-    print(x.inserted_id)
+    # Save data in mongodb
+    sensor_data = sensor.dict()
+    mongodb.insertDoc(sensor_data)
 
     return db_sensor
 
-def record_data(redis: RedisClient, sensor_id: int, data: schemas.SensorData) -> schemas.Sensor:
-    db_sensordata = data
-
-    # Get and group dynamic data
-    dynamic_data = {
-        "velocity": data.velocity,
-        "temperature": data.temperature,
-        "humidity": data.humidity,
-        "battery_level": data.battery_level,
-        "last_seen": data.last_seen,
-    }
-
-    # Create key
-    key = f"sensor:{sensor_id}:data"
-    # Set dynamic data (with JSON format) to key in the redis db
-    redis.set(key, json.dumps(dynamic_data))
+def record_data(sensor_id: int, data: schemas.SensorData, db: Session, redis: RedisClient, mongodb: MongoDBClient) -> schemas.Sensor:
+    
+    db_sensor = get_sensor(db,sensor_id)
+    
+    # Get dynamic data in json format
+    dynamic_data = data.json()
+    # Set dynamic data in Redis
+    redis.set(sensor_id, dynamic_data)
+    # Format dynamic data to dict
+    dynamic_data = json.loads(dynamic_data)
+    
+    # Select database
+    mongodb.getDatabase("mydatabase")
+    # Select collection
+    mongodb.getCollection("sensors")
+    # Find sensor in mongodb
+    sensor_data = mongodb.findDoc({'name': db_sensor.name})
+    # Pop mongodb id
+    sensor_data.pop('_id', None)
+    
+    # Merge sensor data from mongodb and dynamic from redis
+    db_sensordata = {**dynamic_data, **sensor_data}
+    # Format sensor data into json
+    db_sensordata = json.dumps(db_sensordata)
 
     return db_sensordata
 
-def get_data(redis: RedisClient, sensor_id: int, db: Session) -> schemas.Sensor:
+def get_data(sensor_id: int, sensor_name: str, redis: Session, mongodb: MongoDBClient) -> schemas.Sensor:
     
-    # Get sensor by id
-    db_sensor = get_sensor(db, sensor_id)
-    # Create key
-    key = f"sensor:{sensor_id}:data"
-    # Get dynamic data assigned to key
-    dynamic_data = json.loads(redis.get(key))
-
-    # Group static and dynamic data
-    db_sensordata = {
-        "id": sensor_id,
-        "name": db_sensor.name,
-        "velocity": dynamic_data['velocity'],
-        "temperature": dynamic_data['temperature'],
-        "humidity": dynamic_data['humidity'],
-        "battery_level": dynamic_data['battery_level'],
-        "last_seen": dynamic_data['last_seen']
-    }
-
-    return db_sensordata
-
-def get_dynamic_data(redis: RedisClient, sensor_id: int, db: Session) -> schemas.Sensor:
+    # Get dynamic data
+    dynamic_data = redis.get(sensor_id)
+    # Format dynamic data to dict
+    dynamic_data = json.loads(dynamic_data)
     
-    # Get sensor by id
-    db_sensor = get_sensor(db, sensor_id)
-    # Create key
-    key = f"sensor:{sensor_id}:data"
-    # Get dynamic data assigned to key
-    dynamic_data = json.loads(redis.get(key))
-
-    # dynamic data
-    db_sensordata = {
-        "velocity": dynamic_data['velocity'],
-        "temperature": dynamic_data['temperature'],
-        "humidity": dynamic_data['humidity'],
-        "battery_level": dynamic_data['battery_level'],
-        "last_seen": dynamic_data['last_seen']
-    }
+    # Select database
+    mongodb.getDatabase("mydatabase")
+    # Select collection
+    mongodb.getCollection("sensors")
+    # Find sensor in mongodb
+    sensor_data = mongodb.findDoc({'name': sensor_name})
+    # Pop mongodb id
+    sensor_data.pop('_id', None)
+    
+    # Merge sensor data from mongodb and dynamic from redis
+    db_sensordata = {**dynamic_data, **sensor_data}
+    # Add the sensor id
+    db_sensordata['id'] = sensor_id
 
     return db_sensordata
 
 def delete_sensor(db: Session, sensor_id: int):
-    
-    db_sensor = get_sensor(db, sensor_id)
-
+    db_sensor = db.query(models.Sensor).filter(models.Sensor.id == sensor_id).first()
     if db_sensor is None:
         raise HTTPException(status_code=404, detail="Sensor not found")
     db.delete(db_sensor)
     db.commit()
     return db_sensor
 
-def get_sensors_near(db: Session, mongodb: MongoDBClient, redis: RedisClient, latitude: float, longitude: float, radius: float):
+def get_sensors_near(latitude: float, longitude: float, radius: float, db: Session, redis: Session, mongodb: MongoDBClient):
+    
+    # Query to select only sensors that are in the range
+    query = {"latitude": {"$gte": latitude - radius, "$lte": latitude + radius},
+     "longitude": {"$gte": longitude - radius, "$lte": longitude + radius}}
+    
+    # Select database
+    mongodb.getDatabase("mydatabase")
+    # Select collection
+    mongodb.getCollection("sensors")
 
-    # Aproximate radius distance conversion
-    degrees_per_km = 1 / 111.12
-    lat_deg = radius * degrees_per_km
-    lon_deg = radius * degrees_per_km / math.cos(latitude * math.pi / 180)
+    # Find all sensors that match the query
+    db_sensors = mongodb.collection.find(query)
 
-    # Calculate limits
-    lat_min = latitude - lat_deg
-    lat_max = latitude + lat_deg
-    lon_min = longitude - lon_deg
-    lon_max = longitude + lon_deg
+    # List to save all near senssors
+    sensors_near = []
 
-     # Access database
-    collection = mongodb.client["mydatabase"]["sensors"]
+    # For each sensor in the db
+    for sensor in db_sensors:
 
+        #Get sensor data
+        db_sensor = get_sensor_by_name(db,sensor['name'])
+        data = get_data(sensor_id=db_sensor.id, sensor_name=db_sensor.name, redis=redis, mongodb=mongodb)
+        
+        # Save near sensors in list
+        sensors_near.append(data)    
 
-    # Query to find sensors
-    query = {
-        "latitude": {"$gte": lat_min, "$lte": lat_max},
-        "longitude": {"$gte": lon_min, "$lte": lon_max}
-    }
-
-    sensors = collection.find(query)
-
-    # Conversion to dictionary
-    sensors_nearby = []
-    for sensor in sensors:
-        sensors_nearby.append(get_dynamic_data(redis,sensor['id'],db))
-
-    return sensors_nearby
+    return sensors_near

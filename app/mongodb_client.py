@@ -25,16 +25,11 @@ class MongoDBClient:
     def clearDb(self,database):
         self.client.drop_database(database)
 
-    def insertDoc(self, database, collection, document):
-        db = self.getDatabase(self, database)
-        col = self.getCollection(self,collection)
-        doc = col.insert_one(document)
-        return doc
-
-    def findDoc(self, database, collection):
-        db = self.getDatabase(self, database)
-        col = self.getCollection(self,collection)
-        doc = col.find_one()
-        return doc
-
-
+    # Method to find a document into collection
+    def findDoc(self, query = {}):
+        return self.collection.find_one(query)
+    
+    # Method to insert a document into collection
+    def insertDoc(self, document):
+        return self.collection.insert_one(document)
+   
